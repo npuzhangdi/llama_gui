@@ -2,9 +2,43 @@
 """双主题调色板与全局 QSS。"""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtGui import QColor
+
+# 外观设置的默认值；空字符串表示「使用当前主题的原始配色」
+DEFAULT_APPEARANCE = {
+    "accent": "",
+    "background": "",
+    "panel": "",
+    "bubble": "",
+    "bg_image": "",
+    "glass_alpha": 0,
+    "font_size": 13,
+}
+
+
+def _q(value) -> QColor:
+    return value if isinstance(value, QColor) else QColor(value)
+
+
+def _mix(a, b, t: float) -> str:
+    """线性混合两个颜色，t 为 b 的占比。"""
+    ca, cb = _q(a), _q(b)
+    return QColor(
+        round(ca.red() * (1 - t) + cb.red() * t),
+        round(ca.green() * (1 - t) + cb.green() * t),
+        round(ca.blue() * (1 - t) + cb.blue() * t),
+    ).name()
+
+
+def _lum(value) -> float:
+    c = _q(value)
+    return (0.2126 * c.red() + 0.7152 * c.green() + 0.0722 * c.blue()) / 255.0
+
+
+def _valid(value) -> bool:
+    return isinstance(value, str) and bool(value) and QColor(value).isValid()
 
 
 @dataclass(frozen=True)
@@ -93,15 +127,67 @@ DARK = Palette(
 )
 
 
-def palette(name: str) -> Palette:
-    return DARK if name == "dark" else LIGHT
+def palette(name: str, appearance: dict | None = None) -> Palette:
+    """按主题名生成调色板；appearance 中的自定义颜色会派生出完整配色。
+
+    只暴露 4 个基础色（强调色、窗口背景、面板背景、用户气泡），其余
+    文字/边框/悬浮/高亮色全部按亮度自动推导，避免用户选了深色背景后
+    文字仍是深色导致不可读。
+    """
+    base = DARK if name == "dark" else LIGHT
+    dark = name == "dark"
+    if not appearance:
+        return base
+    a = dict(appearance or {})
+
+    accent = a.get("accent") if _valid(a.get("accent")) else base.accent
+    surface = a.get("background") if _valid(a.get("background")) else base.surface
+    surface2 = a.get("panel") if _valid(a.get("panel")) else base.surface2
+    bubble = a.get("bubble") if _valid(a.get("bubble")) else base.user_bubble
+
+    text = "#ECEFF8" if _lum(surface) < 0.52 else "#1D2334"
+    muted = _mix(surface, text, 0.62)
+    faint = _mix(surface, text, 0.38)
+    surface3 = _mix(surface2, text, 0.07)
+    border = _mix(surface2, text, 0.12)
+    border_strong = _mix(surface2, text, 0.24)
+    scroll = _mix(surface2, text, 0.26)
+    accent_hover = _mix(accent, "#FFFFFF" if dark else "#000000", 0.14)
+    accent_soft = _mix(surface2, accent, 0.30 if dark else 0.14)
+    on_accent = "#141726" if _lum(accent) > 0.62 else "#FFFFFF"
+    code_bg = _mix(surface2, text, 0.05)
+    teal_soft = _mix(surface2, base.teal, 0.20 if dark else 0.12)
+
+    alpha = a.get("glass_alpha") or 0
+    try:
+        alpha = int(alpha)
+    except (TypeError, ValueError):
+        alpha = 0
+    if alpha <= 0:
+        alpha = base.glass.alpha()
+    glass = QColor(surface)
+    glass.setAlpha(max(80, min(255, alpha)))
+    glass_edge = QColor(_mix(surface, "#FFFFFF", 0.35))
+    glass_edge.setAlpha(150)
+
+    return replace(
+        base,
+        surface=surface, surface2=surface2, surface3=surface3,
+        border=border, border_strong=border_strong,
+        text=text, muted=muted, faint=faint,
+        accent=accent, accent_hover=accent_hover, accent_soft=accent_soft,
+        on_accent=on_accent, teal_soft=teal_soft,
+        user_bubble=bubble, code_bg=code_bg, code_text=text,
+        scroll=scroll, glass=glass, glass_edge=glass_edge,
+    )
 
 
-def build_qss(p: Palette) -> str:
+def build_qss(p: Palette, font_size: int = 13) -> str:
+    font_size = max(11, min(18, int(font_size or 13)))
     return f"""
 QWidget {{
     font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "SimHei", sans-serif;
-    font-size: 13px;
+    font-size: {font_size}px;
     color: {p.text};
 }}
 QToolTip {{

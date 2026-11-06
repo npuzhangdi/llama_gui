@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "active_id": "b60cf6d07ad2",
+  "projects": [],
+  "sessions": [
+    {
+      "id": "b60cf6d07ad2",
+      "title": "新对话 1",
+      "project_id": "",
+      "system_prompt": "You are a helpful assistant.",
+      "messages": [],
+      "archived": false,
+      "created": "2026-11-06T16:33:18",
+      "updated": "2026-11-06T16:37:26"
+    }
+  ]
+}

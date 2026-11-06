@@ -37,7 +37,7 @@ VENV_SCRIPTS = ROOT / ".venv" / "Scripts"
 RUNTIME_REL = ".venv\\Scripts\\LlamaRuntime.exe"
 SHEBANG = ("#!" + RUNTIME_REL + "\n").encode("ascii")
 MAX_SIZE = 1024 * 1024
-APP_ID = "LlamaStudio.App.3"
+APP_ID = "LlamaStudio.App.4"
 LANG = 0x409
 RT_ICON = 3
 RT_GROUP_ICON = 14
@@ -72,7 +72,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LlamaStudio.App.3")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("LlamaStudio.App.4")
         except Exception:
             pass
     os.chdir(str(root))
@@ -398,16 +398,16 @@ def verify(path: Path, expected_icons: int) -> tuple[int, bool]:
 
 
 def main() -> None:
-    print("程序目录:", ROOT)
-    print("解释器位数:", struct.calcsize("P") * 8, "bit")
+    print("App directory:", ROOT)
+    print("Interpreter:", struct.calcsize("P") * 8, "bit")
     app_ico = ASSETS / "app.ico"
     expected = len(_parse_ico(app_ico)[0])
 
     runtime = build_runtime(app_ico)
     icons, groups = _icon_signature(runtime)
-    print("  %-16s %7d bytes  RT_ICON=%d RT_GROUP_ICON=%s  校验=%s" %
+    print("  %-16s %7d bytes  RT_ICON=%d RT_GROUP_ICON=%s  verify=%s" %
           (runtime.name, runtime.stat().st_size, len(icons), groups,
-           "通过" if groups == [1] and len(icons) == expected else "异常"))
+           "OK" if groups == [1] and len(icons) == expected else "FAILED"))
     if groups != [1] or len(icons) != expected:
         raise SystemExit(1)
 
@@ -418,11 +418,11 @@ def main() -> None:
     for name, ico, source in targets:
         path = build(name, ico, source)
         size, ok = verify(path, expected)
-        print("  %-16s %7d bytes  <1MB=%s  校验=%s" %
-              (name, size, size < MAX_SIZE, "通过" if ok else "异常"))
+        print("  %-16s %7d bytes  <1MB=%s  verify=%s" %
+              (name, size, size < MAX_SIZE, "OK" if ok else "FAILED"))
         if not ok or size >= MAX_SIZE:
             raise SystemExit(1)
-    print("完成。shebang -> %s（相对路径，换电脑自动重建）" % RUNTIME_REL)
+    print("Done. shebang -> %s (relative, rebuilt by first_run.bat)" % RUNTIME_REL)
 
 
 if __name__ == "__main__":

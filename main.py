@@ -24,7 +24,7 @@ from app.window import MainWindow
 
 ROOT = Path(__file__).resolve().parent
 ICON = ROOT / "assets" / "app.ico"
-APP_ID = "LlamaStudio.App.3"
+APP_ID = "LlamaStudio.App.4"
 
 
 def main() -> None:
@@ -50,7 +50,9 @@ def main() -> None:
     app.setWindowIcon(icon)
 
     cfg = Config()
-    app.setStyleSheet(build_qss(palette(str(cfg.get("theme")))))
+    appearance = dict(cfg.get("appearance") or {})
+    pal = palette(str(cfg.get("theme")), appearance)
+    app.setStyleSheet(build_qss(pal, appearance.get("font_size") or 13))
 
     win = MainWindow(cfg)
     win.setWindowIcon(icon)

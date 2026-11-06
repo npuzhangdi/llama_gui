@@ -130,6 +130,9 @@ class MessageBubble(QFrame):
 class ChatView(QWidget):
     request_start = Signal()
     request_open_service = Signal()
+    request_new_session = Signal()      # 由主窗口创建新的临时对话窗口
+    session_dirty = Signal()            # 消息发生变化，需要写回当前会话
+    prompt_changed = Signal(str)        # 当前会话的系统提示词被编辑
 
     def __init__(self, cfg: Config, proc: ProcManager, client: StreamClient, pal: Palette, parent=None):
         super().__init__(parent)
@@ -139,6 +142,9 @@ class ChatView(QWidget):
         self.client = client
         self.pal = pal
         self.messages: list[dict] = []
+        self.session_id = ""
+        self.session_title = "新对话"
+        self.session_project = "临时对话"
         self.content_buffer = ""
         self.reasoning_buffer = ""
         self.current_bubble: MessageBubble | None = None
@@ -181,6 +187,10 @@ class ChatView(QWidget):
         self.mode_badge = QLabel("HTTP 对话 · llama-server")
         self.mode_badge.setObjectName("badge")
         box.addWidget(self.mode_badge)
+        self.session_label = QLabel("新对话")
+        self.session_label.setObjectName("h2")
+        self.session_label.setMaximumWidth(150)
+        box.addWidget(self.session_label)
         self.model_label = QLabel("")
         self.model_label.setObjectName("faint")
         box.addWidget(self.model_label)
@@ -190,6 +200,7 @@ class ChatView(QWidget):
         box.addStretch(1)
 
         self.prompt_btn = QPushButton("系统提示词")
+        self.prompt_btn.setToolTip("显示 / 隐藏本对话专属的系统提示词")
         self.prompt_btn.clicked.connect(self._toggle_prompt)
         self.new_btn = QPushButton("新建对话")
         self.new_btn.clicked.connect(self.new_session)
@@ -213,17 +224,18 @@ class ChatView(QWidget):
         box.setSpacing(11)
 
         self.prompt_card = Card(name="card", margin=12)
-        title = QLabel("系统提示词（每次请求都会携带）")
+        title = QLabel("系统提示词（仅作用于当前对话，每次请求都会携带）")
         title.setObjectName("muted")
         self.prompt_card.vbox.addWidget(title)
         self.prompt_edit = QPlainTextEdit()
         self.prompt_edit.setFixedHeight(58)
         self.prompt_edit.setPlainText(str(self.cfg.get("system_prompt", "")))
         self.prompt_edit.textChanged.connect(
-            lambda: self.cfg.set("system_prompt", self.prompt_edit.toPlainText())
+            lambda: self.prompt_changed.emit(self.prompt_edit.toPlainText())
         )
         self.prompt_card.vbox.addWidget(self.prompt_edit)
-        self.prompt_card.setVisible(False)
+        # 默认展开：新建对话后即可直接设定本对话专属提示词，右上角按钮可收起
+        self.prompt_card.setVisible(True)
         box.addWidget(self.prompt_card)
 
         self.scroll = QScrollArea()
@@ -338,11 +350,12 @@ class ChatView(QWidget):
     def _welcome(self) -> None:
         self._add_bubble(
             "assistant",
-            "<b>Llama Studio</b><br><br>左侧可切换工作区：<br>"
+            "<b>Llama Studio</b><br><br>左侧可切换工作区，下方可管理对话窗口：<br>"
             "&nbsp;&nbsp;• <b>对话</b> — 与本地模型交互（server 走 HTTP，cli 走终端）<br>"
             "&nbsp;&nbsp;• <b>服务</b> — 启动 llama-server 并把 API 提供给其他软件<br>"
-            "&nbsp;&nbsp;• <b>模型</b> — 管理 .gguf 文件并切换当前模型<br><br>"
-            "先在「服务」页启动服务，或在「模型」页选择模型后回来对话。",
+            "&nbsp;&nbsp;• <b>模型</b> — 管理 .gguf 文件并切换当前模型<br>"
+            "&nbsp;&nbsp;• <b>对话窗口</b> — 新建临时对话、按项目分组、归档与删除<br><br>"
+            "每个对话可单独设置系统提示词；右上角齿轮可调整界面配色与背景。",
         )
 
     def _add_bubble(self, role: str, html_text: str) -> MessageBubble:
@@ -369,22 +382,80 @@ class ChatView(QWidget):
         bar = self.scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
-    def new_session(self) -> None:
-        if self.generating:
-            self.stop_generation()
+    def _clear_bubbles(self) -> None:
         while self.msg_layout.count() > 1:
             item = self.msg_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
-        self.messages.clear()
+
+    def new_session(self) -> None:
+        """顶部「新建对话」：交给主窗口创建会话，不再只清空当前视图。"""
+        self.request_new_session.emit()
+
+    def load_session(self, session: dict) -> None:
+        """切换到指定对话窗口：消息、标题、系统提示词全部来自该会话。"""
+        if self.generating:
+            self.stop_generation()
+        self._clear_bubbles()
+        self.messages = [
+            {"role": str(m.get("role", "user")), "content": str(m.get("content", ""))}
+            for m in session.get("messages", [])
+            if m.get("role") in ("user", "assistant")
+        ]
+        self.session_id = str(session.get("id", ""))
+        self.session_title = str(session.get("title", "新对话"))
+        self.prompt_edit.blockSignals(True)
+        self.prompt_edit.setPlainText(str(session.get("system_prompt", "")))
+        self.prompt_edit.blockSignals(False)
+        for m in self.messages:
+            body = (render_markdown(m["content"], self.pal) if m["role"] == "assistant"
+                    else html.escape(m["content"]).replace("\n", "<br>"))
+            self._add_bubble(m["role"], body)
+        if not self.messages:
+            self._welcome()
         self.content_buffer = ""
         self.reasoning_buffer = ""
         self.current_bubble = None
+        self.generating = False
+        self.stop_btn.setVisible(False)
+        self.send_btn.setEnabled(True)
         for chip in self.chips.values():
             chip.set_value("—")
-        self._welcome()
+        self._apply_session_label()
+        QTimer.singleShot(30, self._scroll_bottom)
+
+    def set_session_meta(self, title: str, project: str) -> None:
+        self.session_title = title
+        self.session_project = project
+        self._apply_session_label()
+
+    def _apply_session_label(self) -> None:
+        text = " ".join(self.session_title.split())
+        if len(text) > 10:
+            text = text[:10] + "…"
+        self.session_label.setText(text)
+        self.session_label.setToolTip(f"{self.session_project} / {self.session_title}")
+
+    def snapshot(self) -> dict:
+        return {
+            "messages": [dict(m) for m in self.messages],
+            "system_prompt": self.prompt_edit.toPlainText(),
+        }
+
+    def _rerender_messages(self) -> None:
+        """调色板变化后按新颜色重绘历史消息（代码块、气泡内联样式）。"""
+        if self.generating:
+            return
+        self._clear_bubbles()
+        for m in self.messages:
+            body = (render_markdown(m["content"], self.pal) if m["role"] == "assistant"
+                    else html.escape(m["content"]).replace("\n", "<br>"))
+            self._add_bubble(m["role"], body)
+        if not self.messages:
+            self._welcome()
+        QTimer.singleShot(30, self._scroll_bottom)
 
     # ---------------- 发送 / 生成 ----------------
     def send_message(self) -> None:
@@ -403,6 +474,7 @@ class ChatView(QWidget):
         self.hint_label.setText("")
         self._add_bubble("user", html.escape(text).replace("\n", "<br>"))
         self.messages.append({"role": "user", "content": text})
+        self.session_dirty.emit()
         self.current_bubble = self._add_bubble("assistant", "▍")
         self.content_buffer = ""
         self.reasoning_buffer = ""
@@ -461,6 +533,7 @@ class ChatView(QWidget):
         self._flush_buffer()
         if self.content_buffer:
             self.messages.append({"role": "assistant", "content": self.content_buffer})
+            self.session_dirty.emit()
         if message and not ok:
             self.hint_label.setText(f"请求失败：{message}")
         elif message:
@@ -550,10 +623,7 @@ class ChatView(QWidget):
         self.pal = pal
         for chip in self.chips.values():
             chip.set_palette(pal)
-        for i in range(self.msg_layout.count() - 1):
-            row = self.msg_layout.itemAt(i).widget()
-            if row:
-                for bubble in row.findChildren(MessageBubble):
-                    bubble.set_palette(pal)
+        # 历史消息的富文本内联了旧调色板颜色，需按新配色重绘
+        self._rerender_messages()
         if self.current_bubble:
             self._flush_buffer()

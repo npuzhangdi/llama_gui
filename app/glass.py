@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
-    QColor, QIcon, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPen,
+    QColor, QIcon, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
@@ -115,11 +115,23 @@ class GlassSurface(QWidget):
         self._win = window
         self.pal = pal
         self.maximized = False
+        self.bg_pixmap = QPixmap()
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
 
     def set_palette(self, pal: Palette) -> None:
         self.pal = pal
+        self.update()
+
+    def set_background_image(self, path: str | None) -> None:
+        """加载用户自定义背景图；路径为空时恢复纯色/毛玻璃背景。"""
+        pixmap = QPixmap()
+        if path:
+            try:
+                pixmap.load(str(path))
+            except Exception:
+                pixmap = QPixmap()
+        self.bg_pixmap = pixmap
         self.update()
 
     def _body_rect(self) -> QRectF:
@@ -145,10 +157,28 @@ class GlassSurface(QWidget):
                 outer = r.adjusted(-i, -i, i, i)
                 painter.fillPath(self._rounded(outer, radius + i), c)
 
+        # 自定义背景图铺在圆角区域内，随后叠加半透明着色保证文字可读
+        has_image = not self.bg_pixmap.isNull()
+        if has_image:
+            painter.save()
+            painter.setClipPath(self._rounded(r, radius))
+            scaled = self.bg_pixmap.scaled(
+                r.size().toSize(),
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap(
+                QPointF(r.left() + (r.width() - scaled.width()) / 2,
+                        r.top() + (r.height() - scaled.height()) / 2),
+                scaled)
+            painter.restore()
+
         top = QColor(self.pal.glass)
         bottom = QColor(self.pal.glass)
         top.setAlpha(min(255, top.alpha() + 12))
         bottom.setAlpha(max(150, bottom.alpha() - 14))
+        if has_image:
+            top.setAlpha(min(top.alpha(), 172))
+            bottom.setAlpha(min(bottom.alpha(), 158))
         grad = QLinearGradient(QPointF(r.left(), r.top()), QPointF(r.right(), r.bottom()))
         grad.setColorAt(0.0, top)
         grad.setColorAt(1.0, bottom)
@@ -231,6 +261,7 @@ class IconButton(QPushButton):
 class TitleBar(QWidget):
     theme_toggled = Signal()
     glass_toggled = Signal()
+    settings_clicked = Signal()
 
     def __init__(self, window: "FramelessWindow", title: str, pal: Palette):
         super().__init__(window)
@@ -252,7 +283,7 @@ class TitleBar(QWidget):
         name = QLabel(title)
         name.setObjectName("h2")
         layout.addWidget(name)
-        ver = QLabel("v0.0.3")
+        ver = QLabel("v0.0.4")
         ver.setObjectName("faint")
         layout.addSpacing(4)
         layout.addWidget(ver)
@@ -262,10 +293,13 @@ class TitleBar(QWidget):
         self.center_layout.setSpacing(8)
         layout.addLayout(self.center_layout, 1)
 
+        self.settings_btn = IconButton("settings", self, pal, 30, "外观设置：颜色、背景、字号等")
+        self.settings_btn.clicked.connect(self.settings_clicked.emit)
         self.glass_btn = IconButton("sparkle", self, pal, 30, "切换毛玻璃效果")
         self.glass_btn.clicked.connect(self.glass_toggled.emit)
         self.theme_btn = IconButton("moon" if pal.name == "light" else "sun", self, pal, 30, "切换浅色 / 深色主题")
         self.theme_btn.clicked.connect(self.theme_toggled.emit)
+        layout.addWidget(self.settings_btn)
         layout.addWidget(self.glass_btn)
         layout.addWidget(self.theme_btn)
 
@@ -282,7 +316,8 @@ class TitleBar(QWidget):
 
     def set_palette(self, pal: Palette) -> None:
         self.pal = pal
-        for btn in (self.glass_btn, self.theme_btn, self.min_btn, self.max_btn, self.close_btn):
+        for btn in (self.settings_btn, self.glass_btn, self.theme_btn,
+                    self.min_btn, self.max_btn, self.close_btn):
             btn.set_palette(pal)
         self.theme_btn.set_icon("moon" if pal.name == "light" else "sun")
         self.update()
@@ -364,6 +399,10 @@ class FramelessWindow(QMainWindow):
         self.surface.set_palette(pal)
         self.title_bar.set_palette(pal)
         self.apply_glass()
+
+    def set_background_image(self, path: str | None) -> None:
+        """path 为 None / 空串时清除背景图片。"""
+        self.surface.set_background_image(path or "")
 
     def toggle_maximize(self) -> None:
         if self._maximized:

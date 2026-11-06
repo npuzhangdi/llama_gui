@@ -2,6 +2,8 @@
 """轻量线性图标：全部用 QPainter 绘制，不依赖图片资源或图标字体。"""
 from __future__ import annotations
 
+import math
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 
@@ -128,5 +130,17 @@ def draw_icon(painter: QPainter, rect: QRectF, kind: str, color: str | QColor, w
         circle(8, 17, 1.8)
     elif kind == "bolt":
         poly([(13, 3), (6, 13), (11, 13), (10, 21), (18, 10), (13, 10)], closed=True)
+    elif kind == "settings":
+        # 齿轮：双同心圆 + 八条齿，线性风格与其余图标一致
+        circle(12, 12, 3.1)
+        circle(12, 12, 7.2)
+        for k in range(8):
+            a = math.radians(k * 45)
+            dx, dy = math.cos(a), math.sin(a)
+            line(12 + 7.2 * dx, 12 + 7.2 * dy, 12 + 10 * dx, 12 + 10 * dy)
+    elif kind == "archive":
+        rrect(3, 4, 18, 4, 1.5)
+        poly([(5, 8), (5, 20), (19, 20), (19, 8)])
+        line(10, 12, 14, 12)
 
     painter.restore()

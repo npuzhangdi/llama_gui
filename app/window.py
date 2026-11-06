@@ -1,29 +1,36 @@
 # -*- coding: utf-8 -*-
-"""主窗口：左侧导航、三视图切换、标题栏模型切换器与全局状态联动。
+"""主窗口：左侧导航、对话窗口管理、三视图切换与全局状态联动。
 
-llama-server 与 llama-cli 各由一个独立的 ProcManager 管理，
-两者的启动、停止、日志、就绪状态互不干扰，可同时运行。
+v0.0.4 新增：
+- 左侧「对话窗口」面板：项目（可含多个对话）、临时对话、归档、删除、移动、重命名；
+- 每个对话独立保存消息与系统提示词，切换窗口时自动写回 / 载入；
+- 标题栏右上角「设置」：主题、颜色、背景、背景图片、不透明度、字号、毛玻璃。
 
-关闭主窗口只是隐藏到系统托盘，两个进程继续在后台运行；
-托盘菜单的「退出」才会停止进程并结束程序。
+llama-server 与 llama-cli 仍各由一个独立的 ProcManager 管理，互不干扰；
+关闭主窗口只隐藏到系统托盘，托盘菜单的「退出」才会停止进程并结束程序。
 """
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 
 from .chat_client import StreamClient
 from .chat_view import ChatView
-from .config import Config
+from .config import Config, base_dir
 from .core import ProcManager, probe_health
 from .glass import FramelessWindow
 from .models_view import ModelsView
 from .service_view import ServiceView
-from .theme import Palette, build_qss, palette
+from .session_panel import SessionPanel
+from .sessions import SessionStore
+from .settings_dialog import AppearanceDialog
+from .theme import DEFAULT_APPEARANCE, Palette, build_qss, palette
 from .widgets import NavButton
 
 
@@ -52,9 +59,21 @@ class MainWindow(FramelessWindow):
         self.cfg = cfg
         self.tray = None            # 由 main.py 在构造后注入
         self._closing = False       # 区分「隐藏到托盘」与「真正退出」
-        pal = palette(str(cfg.get("theme")))
+        self.settings_dialog: AppearanceDialog | None = None
+
+        self.store = SessionStore()
+        self.store.ensure_default(str(cfg.get("system_prompt") or ""))
+
+        appearance = dict(cfg.get("appearance") or {})
+        pal = palette(str(cfg.get("theme")), appearance)
         super().__init__(pal, "Llama Studio")
         self.glass_enabled = bool(cfg.get("glass", True))
+
+        # QTimer 需要 QObject 基类已初始化，故放在 super().__init__ 之后
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(450)
+        self._save_timer.timeout.connect(self.store.save)
 
         self.proc_server = ProcManager(self)
         self.proc_cli = ProcManager(self)
@@ -65,6 +84,7 @@ class MainWindow(FramelessWindow):
 
         self._build_title_widgets()
         self._build_body()
+        self._apply_background_image(appearance)
 
         self.service.program_type_changed.connect(lambda _t: self._sync_mode())
         self.service.state_changed.connect(lambda _s, _r: self._sync_mode())
@@ -76,6 +96,14 @@ class MainWindow(FramelessWindow):
         self.chat.request_open_service.connect(lambda: self._navigate(1))
         self.model_combo.currentIndexChanged.connect(self._on_combo_changed)
 
+        # 对话窗口管理
+        self.panel.activated.connect(self._activate_session)
+        self.panel.changed.connect(self._on_sessions_changed)
+        self.chat.request_new_session.connect(self._new_temp_session)
+        self.chat.session_dirty.connect(self._persist_current)
+        self.chat.prompt_changed.connect(self._on_prompt_changed)
+        self.title_bar.settings_clicked.connect(self._open_settings)
+
         self.health_result.connect(self._on_health)
         self._health = HealthThread(self.cfg, self.health_result)
         self._health.start()
@@ -85,6 +113,10 @@ class MainWindow(FramelessWindow):
         self._refresh_model_combo()
         self.apply_glass()
         self._sync_mode()
+
+        self.chat.load_session(self.store.active())
+        self._on_sessions_changed()
+        self.panel.refresh()
 
     def manager_for(self, program_type: str) -> ProcManager:
         return self.proc_cli if program_type == "llama-cli" else self.proc_server
@@ -108,7 +140,7 @@ class MainWindow(FramelessWindow):
         split.setSpacing(10)
 
         nav = QWidget()
-        nav.setFixedWidth(172)
+        nav.setFixedWidth(236)
         nav_box = QVBoxLayout(nav)
         nav_box.setContentsMargins(6, 12, 6, 10)
         nav_box.setSpacing(6)
@@ -120,7 +152,17 @@ class MainWindow(FramelessWindow):
         for idx, btn in enumerate(self.nav_buttons):
             btn.clicked.connect(lambda _=False, i=idx: self._navigate(i))
             nav_box.addWidget(btn)
-        nav_box.addStretch(1)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {self.pal.border}; background: {self.pal.border};")
+        sep.setFixedHeight(1)
+        nav_box.addSpacing(4)
+        nav_box.addWidget(sep)
+        nav_box.addSpacing(2)
+
+        self.panel = SessionPanel(self.store, self.cfg, self.pal)
+        nav_box.addWidget(self.panel, 1)
 
         # 左下角只保留「运行中 / 未启动」状态，不再显示效果标注文字
         self.run_label = QLabel("● 未启动")
@@ -143,6 +185,97 @@ class MainWindow(FramelessWindow):
         self.stack.setCurrentIndex(index)
         for i, btn in enumerate(self.nav_buttons):
             btn.set_active(i == index)
+
+    # ---------------- 对话窗口管理 ----------------
+    def _persist_current(self) -> None:
+        """把当前视图的消息与提示词写回它所属的会话。"""
+        sid = self.chat.session_id
+        if not sid or not self.store.get(sid):
+            return
+        snap = self.chat.snapshot()
+        self.store.update_content(sid, snap["messages"], snap["system_prompt"])
+        self.panel.refresh()
+
+    def _on_prompt_changed(self, text: str) -> None:
+        sid = self.chat.session_id
+        if sid:
+            self.store.set_prompt(sid, text, save=False)
+            self._save_timer.start()
+
+    def _activate_session(self, sid: str) -> None:
+        session = self.store.get(sid)
+        if not session:
+            return
+        if self.chat.session_id and self.chat.session_id != sid:
+            self._persist_current()
+        self.store.set_active(sid)
+        self.chat.load_session(session)
+        self._on_sessions_changed()
+        self._navigate(0)
+
+    def _new_temp_session(self) -> None:
+        session = self.store.create_session(
+            "", "", str(self.cfg.get("system_prompt") or ""))
+        self.panel.refresh()
+        self._activate_session(session["id"])
+
+    def _on_sessions_changed(self) -> None:
+        session = self.store.active()
+        self.chat.set_session_meta(
+            str(session.get("title", "新对话")),
+            self.store.project_name(str(session.get("project_id", ""))),
+        )
+
+    # ---------------- 外观设置 ----------------
+    def _open_settings(self) -> None:
+        if self.settings_dialog is None:
+            dlg = AppearanceDialog(self.cfg, self.pal, self)
+            dlg.appearance_changed.connect(self._apply_appearance)
+            self.settings_dialog = dlg
+        else:
+            self.settings_dialog.sync_from_config()
+            self.settings_dialog.set_palette(self.pal)
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+
+    def _apply_appearance(self, data: dict) -> None:
+        state = dict(data)
+        theme = str(state.pop("theme", self.cfg.get("theme")) or "light")
+        glass = bool(state.pop("glass", self.cfg.get("glass", True)))
+        appearance = {**DEFAULT_APPEARANCE,
+                      **{k: v for k, v in state.items() if k in DEFAULT_APPEARANCE}}
+        self.cfg.set("theme", theme)
+        self.cfg.set("glass", glass)
+        self.cfg.set("appearance", appearance)
+        self.cfg.save()
+
+        pal: Palette = palette(theme, appearance)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(build_qss(pal, appearance.get("font_size") or 13))
+        self.glass_enabled = glass
+        self.set_palette(pal)
+        self.chat.set_palette(pal)
+        self.service.set_palette(pal)
+        self.models.set_palette(pal)
+        self.panel.set_palette(pal)
+        for btn in self.nav_buttons:
+            btn.set_palette(pal)
+        if self.settings_dialog is not None:
+            self.settings_dialog.set_palette(pal)
+        self._apply_background_image(appearance)
+        self._sync_mode()
+
+    def _apply_background_image(self, appearance: dict) -> None:
+        rel = str(appearance.get("bg_image") or "")
+        if not rel:
+            self.set_background_image("")
+            return
+        candidate = Path(rel)
+        if not candidate.is_absolute():
+            candidate = base_dir() / candidate
+        self.set_background_image(str(candidate) if candidate.is_file() else "")
 
     # ---------------- 模型切换 ----------------
     def _refresh_model_combo(self) -> None:
@@ -218,22 +351,17 @@ class MainWindow(FramelessWindow):
     # ---------------- 主题与毛玻璃 ----------------
     def _on_theme_toggle(self) -> None:
         new_name = "dark" if self.cfg.get("theme") == "light" else "light"
-        self.cfg.set("theme", new_name)
-        pal: Palette = palette(new_name)
-        app = QApplication.instance()
-        if app is not None:
-            app.setStyleSheet(build_qss(pal))
-        self.set_palette(pal)
-        self.chat.set_palette(pal)
-        self.service.set_palette(pal)
-        self.models.set_palette(pal)
-        for btn in self.nav_buttons:
-            btn.set_palette(pal)
-        self._sync_mode()
+        state = dict(self.cfg.get("appearance") or {})
+        state["theme"] = new_name
+        state["glass"] = bool(self.cfg.get("glass", True))
+        self._apply_appearance(state)
 
     def toggle_glass(self) -> None:
         super().toggle_glass()
         self.cfg.set("glass", self.glass_enabled)
+        self.cfg.save()
+        if self.settings_dialog is not None:
+            self.settings_dialog.sync_from_config()
 
     # ---------------- 托盘 / 关闭 ----------------
     def attach_tray(self, tray) -> None:
@@ -272,9 +400,15 @@ class MainWindow(FramelessWindow):
         if self.tray is not None:
             self.tray.hide()
 
+    def _save_all(self) -> None:
+        self._persist_current()
+        self._save_timer.stop()
+        self.store.save()
+        self.cfg.save()
+
     def quit_application(self) -> None:
         self._closing = True
-        self.cfg.save()
+        self._save_all()
         self.shutdown_all()
         self.close()
         app = QApplication.instance()
@@ -282,7 +416,7 @@ class MainWindow(FramelessWindow):
             app.quit()
 
     def closeEvent(self, event) -> None:
-        self.cfg.save()
+        self._save_all()
         if self._closing:
             super().closeEvent(event)
             return

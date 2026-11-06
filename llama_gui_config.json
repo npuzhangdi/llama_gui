@@ -30,6 +30,15 @@
   "custom": "",
   "theme": "light",
   "glass": true,
+  "appearance": {
+    "accent": "",
+    "background": "",
+    "panel": "",
+    "bubble": "",
+    "bg_image": "",
+    "glass_alpha": 0,
+    "font_size": 13
+  },
   "param_group": "all",
   "system_prompt": "You are a helpful assistant.",
   "max_tokens": "",

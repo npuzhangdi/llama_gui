@@ -105,6 +105,7 @@ DEFAULTS = {
     # 界面
     "theme": "light",
     "glass": True,
+    "appearance": {},              # 自定义配色、背景图、不透明度、字号
     "param_group": "all",
     "system_prompt": "You are a helpful assistant.",
     "max_tokens": "",
