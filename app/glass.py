@@ -252,7 +252,7 @@ class TitleBar(QWidget):
         name = QLabel(title)
         name.setObjectName("h2")
         layout.addWidget(name)
-        ver = QLabel("v0.0.2")
+        ver = QLabel("v0.0.3")
         ver.setObjectName("faint")
         layout.addSpacing(4)
         layout.addWidget(ver)

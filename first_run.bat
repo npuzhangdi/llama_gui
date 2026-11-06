@@ -1,17 +1,18 @@
 @echo off
 setlocal EnableExtensions
-chcp 65001 >nul 2>&1
+rem Ê¹ÓÃÏµÍ³Ä¬ÈÏµÄ GBK ´úÂëÒ³£»cmd ÔÚ UTF-8(65001) ÏÂ°´×Ö·û¼ÆÊý¶ÁÈ¡Åú´¦Àí»á´íÎ»
+chcp 936 >nul 2>&1
 cd /d "%~dp0"
-title Llama Studio - é¦–æ¬¡è¿è¡Œå®‰è£…
+title Llama Studio - Ê×´ÎÔËÐÐ°²×°
 
 echo.
 echo   ==========================================================
-echo      Llama Studio  é¦–æ¬¡è¿è¡ŒçŽ¯å¢ƒå®‰è£…
+echo      Llama Studio  Ê×´ÎÔËÐÐ»·¾³°²×°
 echo   ==========================================================
-echo   ç¨‹åºç›®å½•: %CD%
+echo   ³ÌÐòÄ¿Â¼: %CD%
 echo.
 
-rem ---- æŒ‘é€‰å¯ç”¨çš„ Python è§£é‡Šå™¨ï¼ˆå…¨éƒ¨ç›¸å¯¹ï¼Œä¸å†™æ­»ä»»ä½•è·¯å¾„ï¼‰ ----
+rem ---- ÌôÑ¡¿ÉÓÃµÄ Python ½âÊÍÆ÷£¨È«²¿Ïà¶Ô£¬²»Ð´ËÀÈÎºÎÂ·¾¶£© ----
 set "PY="
 py -3 -c "import sys" >nul 2>&1
 if not errorlevel 1 set "PY=py -3"
@@ -21,48 +22,55 @@ if not defined PY (
 )
 if not defined PY goto NO_PYTHON
 
-echo [1/4] Python è§£é‡Šå™¨: %PY%
+echo [1/4] Python ½âÊÍÆ÷: %PY%
 
 if exist ".venv\Scripts\python.exe" (
-    echo [2/4] è™šæ‹ŸçŽ¯å¢ƒ .venv å·²å­˜åœ¨ï¼Œè·³è¿‡åˆ›å»ºã€‚
+    ".venv\Scripts\python.exe" -c "import sys" >nul 2>&1
+    if errorlevel 1 (
+        echo [2/4] ¼ì²âµ½ÐéÄâ»·¾³²»¿ÉÓÃ£¨¿ÉÄÜÀ´×ÔÁíÒ»Ì¨µçÄÔ£©£¬ÕýÔÚÖØ½¨ ...
+        %PY% -m venv --clear .venv
+    ) else (
+        echo [2/4] ÐéÄâ»·¾³ .venv ¿ÉÓÃ£¬Ìø¹ý´´½¨¡£
+    )
 ) else (
-    echo [2/4] åˆ›å»ºè™šæ‹ŸçŽ¯å¢ƒ .venv ...
+    echo [2/4] ´´½¨ÐéÄâ»·¾³ .venv ...
     %PY% -m venv .venv
 )
 if not exist ".venv\Scripts\python.exe" goto VENV_FAILED
 
-echo [3/4] å®‰è£…è¿è¡Œä¾èµ–ï¼ˆé¦–æ¬¡å¯èƒ½éœ€è¦å‡ åˆ†é’Ÿï¼‰...
+echo [3/4] °²×°ÔËÐÐÒÀÀµ£¨Ê×´Î¿ÉÄÜÐèÒª¼¸·ÖÖÓ£©...
 if defined LLAMA_PIP_INDEX set "PIP_INDEX_URL=%LLAMA_PIP_INDEX%"
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto PIP_FAILED
 
-echo [4/4] ç”Ÿæˆæœ¬åœ°å¯åŠ¨å™¨ï¼ˆæŒ‰å½“å‰è§£é‡Šå™¨ä½æ•°é‡å»ºï¼Œå†™å…¥è‡ªå®šä¹‰å›¾æ ‡ï¼‰...
+echo [4/4] ÖØ½¨Æô¶¯Æ÷¡¢ÔËÐÐÊ±½âÊÍÆ÷Óë×Ô¶¨ÒåÍ¼±ê ...
 ".venv\Scripts\python.exe" tools\build_launchers.py
 if errorlevel 1 goto BUILD_FAILED
 
-".venv\Scripts\python.exe" -c "import PySide6,sys; print('  çŽ¯å¢ƒå°±ç»ª: PySide6 ' + PySide6.__version__ + ' / Python ' + sys.version.split()[0])"
+".venv\Scripts\python.exe" -c "import PySide6,sys; print('  »·¾³¾ÍÐ÷: PySide6 ' + PySide6.__version__ + ' / Python ' + sys.version.split()[0])"
 if errorlevel 1 goto PIP_FAILED
 echo.
-echo   å®‰è£…å®Œæˆï¼åŒå‡» LlamaGUI.exe å¯åŠ¨è½¯ä»¶ï¼ˆæ— æŽ§åˆ¶å°çª—å£ï¼‰ã€‚
-echo   æ¢åˆ°åˆ«çš„ç”µè„‘æ—¶ï¼Œå¤åˆ¶æ•´ä¸ªæ–‡ä»¶å¤¹åŽé‡æ–°è¿è¡Œæœ¬è„šæœ¬å³å¯ã€‚
-echo   å¦‚éœ€å¸è½½ï¼Œè¿è¡Œ uninstall.exeã€‚
+echo   °²×°Íê³É£¡Ë«»÷ LlamaGUI.exe Æô¶¯Èí¼þ£¨ÎÞ¿ØÖÆÌ¨´°¿Ú£©¡£
+echo   ·þÎñÒ³µã¡¸ºóÌ¨ÔËÐÐ¡¹¿ÉÒþ²Ø½çÃæ¡¢×¤ÁôÓÒÏÂ½ÇÍÐÅÌ£»ÓÒ¼üÍÐÅÌ¿É´ò¿ªÖ÷½çÃæ»òÍË³ö¡£
+echo   »»µ½±ðµÄµçÄÔÊ±£¬¸´ÖÆÕû¸öÎÄ¼þ¼ÐºóÖØÐÂÔËÐÐ±¾½Å±¾¼´¿É¡£
+echo   ÈçÐèÐ¶ÔØ£¬ÔËÐÐ uninstall.exe¡£
 echo.
 if not "%LLAMA_SILENT%"=="1" pause
 exit /b 0
 
 :NO_PYTHON
-echo [é”™è¯¯] æœªæ£€æµ‹åˆ°å¯ç”¨çš„ Python 3.9+ã€‚
-echo        è¯·å…ˆå®‰è£… Python å¹¶å‹¾é€‰ Add Python to PATHï¼Œç„¶åŽé‡æ–°è¿è¡Œæœ¬è„šæœ¬ã€‚
+echo [´íÎó] Î´¼ì²âµ½¿ÉÓÃµÄ Python 3.9+¡£
+echo        ÇëÏÈ°²×° Python ²¢¹´Ñ¡ Add Python to PATH£¬È»ºóÖØÐÂÔËÐÐ±¾½Å±¾¡£
 goto FAIL
 :VENV_FAILED
-echo [é”™è¯¯] è™šæ‹ŸçŽ¯å¢ƒåˆ›å»ºå¤±è´¥ï¼Œè¯·ç¡®è®¤ Python å®‰è£…å®Œæ•´ï¼ˆå« venv æ¨¡å—ï¼‰ã€‚
+echo [´íÎó] ÐéÄâ»·¾³´´½¨Ê§°Ü£¬ÇëÈ·ÈÏ Python °²×°ÍêÕû£¨º¬ venv Ä£¿é£©¡£
 goto FAIL
 :PIP_FAILED
-echo [é”™è¯¯] ä¾èµ–å®‰è£…å¤±è´¥ã€‚å›½å†…ç½‘ç»œå¯å…ˆè®¾ç½®é•œåƒå†é‡è¯•ï¼Œä¾‹å¦‚ï¼š
+echo [´íÎó] ÒÀÀµ°²×°Ê§°Ü¡£¹úÄÚÍøÂç¿ÉÏÈÉèÖÃ¾µÏñÔÙÖØÊÔ£¬ÀýÈç£º
 echo        set LLAMA_PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 goto FAIL
 :BUILD_FAILED
-echo [é”™è¯¯] å¯åŠ¨å™¨ç”Ÿæˆå¤±è´¥ï¼Œè¯·ç¡®è®¤ tools\launcher ä¸Ž assets ç›®å½•å®Œæ•´ã€‚
+echo [´íÎó] Æô¶¯Æ÷Éú³ÉÊ§°Ü£¬ÇëÈ·ÈÏ tools\launcher Óë assets Ä¿Â¼ÍêÕû¡£
 goto FAIL
 :FAIL
 echo.

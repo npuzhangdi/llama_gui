@@ -3,6 +3,9 @@
 
 llama-server 与 llama-cli 各由一个独立的 ProcManager 管理，
 两者的启动、停止、日志、就绪状态互不干扰，可同时运行。
+
+关闭主窗口只是隐藏到系统托盘，两个进程继续在后台运行；
+托盘菜单的「退出」才会停止进程并结束程序。
 """
 from __future__ import annotations
 
@@ -47,6 +50,8 @@ class MainWindow(FramelessWindow):
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self.tray = None            # 由 main.py 在构造后注入
+        self._closing = False       # 区分「隐藏到托盘」与「真正退出」
         pal = palette(str(cfg.get("theme")))
         super().__init__(pal, "Llama Studio")
         self.glass_enabled = bool(cfg.get("glass", True))
@@ -66,6 +71,7 @@ class MainWindow(FramelessWindow):
         self.models.model_changed.connect(self._on_model_changed)
         self.models.restart_requested.connect(self.service.restart)
         self.service.llama_dir_changed.connect(self._on_llama_dir_changed)
+        self.service.background_requested.connect(self.hide_to_tray)
         self.chat.request_start.connect(self._start_from_chat)
         self.chat.request_open_service.connect(lambda: self._navigate(1))
         self.model_combo.currentIndexChanged.connect(self._on_combo_changed)
@@ -192,6 +198,9 @@ class MainWindow(FramelessWindow):
             + "\nllama-cli：" + ("运行中" if self.proc_cli.is_running() else "未启动")
         )
         self.models.set_running(any_running)
+        if self.tray is not None:
+            self.tray.update_status(self.proc_server.is_running(),
+                                    self.proc_cli.is_running())
 
     def _on_health(self, ok: bool) -> None:
         # 就绪状态只由 server 自己的进程决定，与界面当前选中哪个模式无关
@@ -226,9 +235,33 @@ class MainWindow(FramelessWindow):
         super().toggle_glass()
         self.cfg.set("glass", self.glass_enabled)
 
-    # ---------------- 关闭 ----------------
-    def closeEvent(self, event) -> None:
-        self.cfg.save()
+    # ---------------- 托盘 / 关闭 ----------------
+    def attach_tray(self, tray) -> None:
+        self.tray = tray
+        self._sync_mode()
+
+    def hide_to_tray(self) -> None:
+        """服务页「后台运行」：只隐藏界面，两个进程保持原状。"""
+        if self.tray is None or not self.tray.available:
+            self.showMinimized()
+            return
+        self.hide()
+        self.tray.notify_hidden()
+
+    def restore_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def toggle_server_from_tray(self) -> None:
+        """托盘菜单只操作 llama-server，不影响 llama-cli。"""
+        if self.proc_server.is_running():
+            self.service.stop_process("llama-server")
+        else:
+            self.service.start_process("llama-server")
+
+    def shutdown_all(self) -> None:
+        """真正退出时停止两个进程与后台线程。"""
         try:
             self._health.stop()
         except Exception:
@@ -236,4 +269,31 @@ class MainWindow(FramelessWindow):
         self.client.cancel()
         self.proc_server.shutdown()
         self.proc_cli.shutdown()
-        super().closeEvent(event)
+        if self.tray is not None:
+            self.tray.hide()
+
+    def quit_application(self) -> None:
+        self._closing = True
+        self.cfg.save()
+        self.shutdown_all()
+        self.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def closeEvent(self, event) -> None:
+        self.cfg.save()
+        if self._closing:
+            super().closeEvent(event)
+            return
+        if self.tray is not None and self.tray.available:
+            # 隐藏而非退出：两个后台进程保持不变，服务仍可被其它应用调用
+            event.ignore()
+            self.hide()
+            self.tray.notify_hidden()
+        else:
+            self.shutdown_all()
+            super().closeEvent(event)
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()

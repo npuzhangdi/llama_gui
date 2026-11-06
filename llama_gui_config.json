@@ -1,5 +1,5 @@
 {
-  "program_type": "llama-cli",
+  "program_type": "llama-server",
   "llama_dir": "D:\\softwares\\llama\\llama-b10950-bin-win-cpu-x64",
   "path_llama-server": "D:\\softwares\\llama\\llama-b10950-bin-win-cpu-x64\\llama-server.exe",
   "path_llama-cli": "D:\\softwares\\llama\\llama-b10950-bin-win-cpu-x64\\llama-cli.exe",

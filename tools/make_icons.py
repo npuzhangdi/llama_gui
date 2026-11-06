@@ -1,9 +1,21 @@
 # -*- coding: utf-8 -*-
 """生成程序与卸载程序的多尺寸 ICO 图标（仅构建期需要 Pillow，运行期不需要）。
 
+Windows 10/11 会在不同位置索取不同尺寸的图标：
+  任务栏 / 标题栏 16~32px，Alt-Tab / 任务管理器 32~64px，
+  资源管理器大图标 / 跳转列表 96~256px，高 DPI 还会按 125%/150% 缩放。
+因此这里输出 10 个原生尺寸，避免系统缩放导致图标空白或模糊。
+
+<=128px 使用 32bpp BGRA DIB（兼容性最好，任务管理器与小图标路径稳定），
+256px 使用 PNG 压缩（控制体积）。
+
 用法：python tools/make_icons.py
 产出：assets/app.ico、assets/uninstall.ico
 """
+from __future__ import annotations
+
+import io
+import struct
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -12,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 S = 4                      # 超采样倍率，保证小尺寸图标边缘平滑
 N = 256 * S
-SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+SIZES = (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)
 
 
 def _gradient(c1, c2):
@@ -80,13 +92,46 @@ def make_uninstall_icon() -> Image.Image:
     return img.resize((256, 256), Image.LANCZOS)
 
 
+def _dib(image: Image.Image, size: int) -> bytes:
+    """构造 32bpp BGRA + AND mask 的 ICO 位图（自下而上）。"""
+    im = image.resize((size, size), Image.LANCZOS).convert("RGBA")
+    im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    r, g, b, a = im.split()
+    xor = Image.merge("RGBA", (b, g, r, a)).tobytes()
+    and_row = ((size + 31) // 32) * 4
+    and_mask = b"\x00" * (and_row * size)   # 32bpp 已带 alpha，掩码全 0
+    header = struct.pack("<IiiHHIIiiII",
+                         40, size, size * 2, 1, 32, 0,
+                         len(xor) + len(and_mask), 0, 0, 0, 0)
+    return header + xor + and_mask
+
+
+def _png(image: Image.Image, size: int) -> bytes:
+    buffer = io.BytesIO()
+    image.resize((size, size), Image.LANCZOS).convert("RGBA").save(
+        buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+def write_ico(path: Path, image: Image.Image) -> None:
+    payloads = [(s, _png(image, s) if s == 256 else _dib(image, s)) for s in SIZES]
+    out = bytearray(struct.pack("<HHH", 0, 1, len(payloads)))
+    offset = 6 + 16 * len(payloads)
+    for size, data in payloads:
+        side = 0 if size == 256 else size
+        out += struct.pack("<BBBBHHII", side, side, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+    for _size, data in payloads:
+        out += data
+    path.write_bytes(bytes(out))
+
+
 def main() -> None:
     ASSETS.mkdir(parents=True, exist_ok=True)
     for name, factory in (("app.ico", make_app_icon), ("uninstall.ico", make_uninstall_icon)):
-        icon = factory()
         path = ASSETS / name
-        icon.save(path, format="ICO", sizes=SIZES)
-        print(f"{path.name}: {path.stat().st_size} bytes, {len(SIZES)} sizes")
+        write_ico(path, factory())
+        print(f"{path.name}: {path.stat().st_size} bytes, {len(SIZES)} sizes {SIZES}")
 
 
 if __name__ == "__main__":

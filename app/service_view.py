@@ -38,6 +38,7 @@ class ServiceView(QWidget):
     program_type_changed = Signal(str)
     state_changed = Signal(str, bool)
     llama_dir_changed = Signal()
+    background_requested = Signal()   # 隐藏主窗口、驻留托盘，后台进程保持不变
 
     def __init__(self, cfg: Config, proc_server: ProcManager, proc_cli: ProcManager,
                  pal: Palette, parent=None):
@@ -232,17 +233,34 @@ class ServiceView(QWidget):
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.clicked.connect(self.toggle_process)
         top.addWidget(self.start_btn)
+        self.bg_btn = QPushButton("后台运行")
+        self.bg_btn.setObjectName("quiet")
+        self.bg_btn.setFixedWidth(92)
+        self.bg_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.bg_btn.setToolTip("隐藏主界面并驻留右下角托盘，服务继续运行；\n"
+                               "右键托盘图标可打开主界面或退出程序")
+        self.bg_btn.clicked.connect(self.background_requested.emit)
+        top.addWidget(self.bg_btn)
         card.vbox.addLayout(top)
 
-        # 两种程序各自的状态，切换运行模式不会改变另一个进程的启停
+        # 两种程序各自的状态与独立启停按钮，无需切换运行模式即可分别控制
         dual = QHBoxLayout()
-        dual.setSpacing(16)
+        dual.setSpacing(10)
         self.dual_labels: dict[str, QLabel] = {}
+        self.dual_buttons: dict[str, QPushButton] = {}
         for pt in ("llama-server", "llama-cli"):
             lab = QLabel(f"● {pt}  未启动")
             lab.setObjectName("faint")
             self.dual_labels[pt] = lab
             dual.addWidget(lab)
+            btn = QPushButton("启动")
+            btn.setObjectName("mini")
+            btn.setFixedWidth(62)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(f"独立启动 / 停止 {pt}，不影响另一个程序")
+            btn.clicked.connect(lambda _=False, p=pt: self.toggle_process_for(p))
+            self.dual_buttons[pt] = btn
+            dual.addWidget(btn)
         note = QLabel("两者相互独立，可分别启停、同时运行")
         note.setObjectName("faint")
         dual.addWidget(note, 1)
@@ -622,6 +640,13 @@ class ServiceView(QWidget):
         else:
             self.start_process(pt)
 
+    def toggle_process_for(self, program_type: str) -> None:
+        """双状态区的独立启停：不改变当前运行模式，也不触碰另一个进程。"""
+        if self.managers[program_type].is_running():
+            self.stop_process(program_type)
+        else:
+            self.start_process(program_type)
+
     def start_process(self, program_type: str | None = None) -> bool:
         """只启动指定模式的进程；另一个程序保持原状。"""
         pt = program_type or self.current_type()
@@ -686,9 +711,13 @@ class ServiceView(QWidget):
 
     def _refresh_dual(self) -> None:
         for pt, lab in self.dual_labels.items():
-            running = self.managers[pt].is_running()
+            # 用状态而非 poll()：点击停止后立即反馈，不必等子进程真正退出
+            running = self.managers[pt].state() == "running"
             lab.setText(f"● {pt}  {'运行中' if running else '未启动'}")
             lab.setStyleSheet(f"color: {self.pal.success if running else self.pal.faint};")
+            btn = getattr(self, "dual_buttons", {}).get(pt)
+            if btn is not None:
+                btn.setText("停止" if running else "启动")
 
     def _refresh_status(self, running: bool, program_type: str | None = None) -> None:
         pt = program_type or self.current_type()

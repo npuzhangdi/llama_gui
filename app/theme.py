@@ -184,6 +184,14 @@ QPushButton#danger {{
 QPushButton#danger:hover {{ background: {p.danger}; color: #FFFFFF; }}
 QPushButton#quiet {{ border: none; background: transparent; padding: 5px 9px; }}
 QPushButton#quiet:hover {{ background: {p.surface2}; }}
+QPushButton#mini {{
+    border: 1px solid {p.border_strong};
+    background: {p.surface};
+    border-radius: 8px;
+    padding: 3px 10px;
+    font-size: 12px;
+}}
+QPushButton#mini:hover {{ background: {p.surface3}; border-color: {p.accent}; }}
 QPushButton#segment {{
     border: none;
     background: transparent;
