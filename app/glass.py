@@ -11,9 +11,12 @@ from __future__ import annotations
 import ctypes
 import sys
 from ctypes import wintypes
+from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (
+    QColor, QIcon, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPen,
+)
 from PySide6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QPushButton,
     QVBoxLayout, QWidget,
@@ -104,7 +107,7 @@ def enable_glass(hwnd: int, dark: bool, enabled: bool = True) -> str:
 class GlassSurface(QWidget):
     """窗口最外层：负责阴影、圆角、半透明着色与边缘缩放。"""
 
-    PAD = 11
+    PAD = 6
     RADIUS = 16
 
     def __init__(self, window: "FramelessWindow", pal: Palette):
@@ -134,10 +137,11 @@ class GlassSurface(QWidget):
         r = self._body_rect()
         radius = 0 if self.maximized else self.RADIUS
 
+        # 极淡的三层柔光：只提供层次，不再在窗口外围形成一圈清晰矩形轮廓
         if not self.maximized:
-            for i in range(7, 0, -1):
+            for i in range(3, 0, -1):
                 c = QColor(self.pal.shadow)
-                c.setAlpha(max(2, int(self.pal.shadow.alpha() * (8 - i) / 26)))
+                c.setAlpha(max(2, int(self.pal.shadow.alpha() * (4 - i) / 30)))
                 outer = r.adjusted(-i, -i, i, i)
                 painter.fillPath(self._rounded(outer, radius + i), c)
 
@@ -150,13 +154,7 @@ class GlassSurface(QWidget):
         grad.setColorAt(1.0, bottom)
         painter.fillPath(self._rounded(r, radius), grad)
 
-        edge = QColor(self.pal.glass_edge)
-        pen = QPen(edge)
-        pen.setWidthF(1.0)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawPath(self._rounded(r.adjusted(0.5, 0.5, -0.5, -0.5), radius))
-
+        # 不再绘制最外圈描边：窗口边界仅由圆角着色与柔和阴影表达
         if not self.maximized:
             painter.setPen(QPen(QColor(self.pal.scroll), 1.2))
             bx, by = r.right() - 14, r.bottom() - 14
@@ -248,11 +246,13 @@ class TitleBar(QWidget):
         self.logo = QWidget(self)
         self.logo.setFixedSize(26, 26)
         layout.addWidget(self.logo)
+        icon_file = Path(__file__).resolve().parent.parent / "assets" / "app.ico"
+        self.logo_icon = QIcon(str(icon_file)) if icon_file.is_file() else None
 
         name = QLabel(title)
         name.setObjectName("h2")
         layout.addWidget(name)
-        ver = QLabel("v0.0.1")
+        ver = QLabel("v0.0.2")
         ver.setObjectName("faint")
         layout.addSpacing(4)
         layout.addWidget(ver)
@@ -292,10 +292,14 @@ class TitleBar(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         rect = QRectF(self.logo.geometry())
-        painter.setBrush(QColor(self.pal.accent))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(rect, 8, 8)
-        draw_icon(painter, rect.adjusted(4, 4, -4, -4), "bolt", self.pal.on_accent, 2.0)
+        if self.logo_icon is not None:
+            painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            self.logo_icon.paint(painter, rect.toRect())
+        else:
+            painter.setBrush(QColor(self.pal.accent))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(rect, 8, 8)
+            draw_icon(painter, rect.adjusted(4, 4, -4, -4), "bolt", self.pal.on_accent, 2.0)
 
     def _interactive_child(self, pos) -> bool:
         child = self.childAt(pos)

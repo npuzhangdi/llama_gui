@@ -1,1 +1,1 @@
-llama_gui v0.0.1
+llama_gui v0.0.2

@@ -1,9 +1,10 @@
 {
   "program_type": "llama-cli",
-  "path_llama-server": "D:/softwares/llama/llama-b10950-bin-win-cpu-x64/llama-server.exe",
-  "path_llama-cli": "D:/softwares/llama/llama-b10950-bin-win-cpu-x64/llama-cli.exe",
-  "scan_dir": "D:/softwares/llama/dir",
-  "model": "D:/softwares/llama/dir/Qwen3-0.6B-IQ4_XS.gguf",
+  "llama_dir": "D:\\softwares\\llama\\llama-b10950-bin-win-cpu-x64",
+  "path_llama-server": "D:\\softwares\\llama\\llama-b10950-bin-win-cpu-x64\\llama-server.exe",
+  "path_llama-cli": "D:\\softwares\\llama\\llama-b10950-bin-win-cpu-x64\\llama-cli.exe",
+  "scan_dir": "D:\\softwares\\llama",
+  "model": "D:\\softwares\\llama\\dir\\qwen3.5-2B-deepseek-v4-Q5_K_M.gguf",
   "host": "127.0.0.1",
   "port": "8080",
   "ngl": "99",
@@ -29,6 +30,7 @@
   "custom": "",
   "theme": "light",
   "glass": true,
+  "param_group": "all",
   "system_prompt": "You are a helpful assistant.",
   "max_tokens": "",
   "temperature": ""

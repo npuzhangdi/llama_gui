@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""主窗口：左侧导航、三视图切换、标题栏模型切换器与全局状态联动。"""
+"""主窗口：左侧导航、三视图切换、标题栏模型切换器与全局状态联动。
+
+llama-server 与 llama-cli 各由一个独立的 ProcManager 管理，
+两者的启动、停止、日志、就绪状态互不干扰，可同时运行。
+"""
 from __future__ import annotations
 
 import threading
@@ -47,10 +51,12 @@ class MainWindow(FramelessWindow):
         super().__init__(pal, "Llama Studio")
         self.glass_enabled = bool(cfg.get("glass", True))
 
-        self.proc = ProcManager(self)
+        self.proc_server = ProcManager(self)
+        self.proc_cli = ProcManager(self)
         self.client = StreamClient(self)
         # 必须最先连接 finished，保证进程引用被清理后其它槽再读状态
-        self.proc.finished.connect(self.proc.on_finished)
+        for proc in (self.proc_server, self.proc_cli):
+            proc.finished.connect(proc.on_finished)
 
         self._build_title_widgets()
         self._build_body()
@@ -59,19 +65,26 @@ class MainWindow(FramelessWindow):
         self.service.state_changed.connect(lambda _s, _r: self._sync_mode())
         self.models.model_changed.connect(self._on_model_changed)
         self.models.restart_requested.connect(self.service.restart)
+        self.service.llama_dir_changed.connect(self._on_llama_dir_changed)
         self.chat.request_start.connect(self._start_from_chat)
         self.chat.request_open_service.connect(lambda: self._navigate(1))
         self.model_combo.currentIndexChanged.connect(self._on_combo_changed)
-        self.glass_mode_changed.connect(lambda mode: self.glass_label.setText(mode))
 
         self.health_result.connect(self._on_health)
         self._health = HealthThread(self.cfg, self.health_result)
         self._health.start()
 
-        self.proc.state_changed.connect(self._sync_state_only)
+        for proc in (self.proc_server, self.proc_cli):
+            proc.state_changed.connect(self._sync_state_only)
         self._refresh_model_combo()
         self.apply_glass()
         self._sync_mode()
+
+    def manager_for(self, program_type: str) -> ProcManager:
+        return self.proc_cli if program_type == "llama-cli" else self.proc_server
+
+    def any_running(self) -> bool:
+        return self.proc_server.is_running() or self.proc_cli.is_running()
 
     def _build_title_widgets(self) -> None:
         lab = QLabel("当前模型")
@@ -79,7 +92,7 @@ class MainWindow(FramelessWindow):
         self.title_bar.center_layout.addWidget(lab)
         self.model_combo = QComboBox()
         self.model_combo.setFixedWidth(268)
-        self.model_combo.setToolTip("快速切换模型；运行中切换需重启服务")
+        self.model_combo.setToolTip("快速切换模型；运行中切换需重启相应程序")
         self.title_bar.center_layout.addWidget(self.model_combo)
         self.title_bar.center_layout.addStretch(1)
 
@@ -103,19 +116,14 @@ class MainWindow(FramelessWindow):
             nav_box.addWidget(btn)
         nav_box.addStretch(1)
 
+        # 左下角只保留「运行中 / 未启动」状态，不再显示效果标注文字
         self.run_label = QLabel("● 未启动")
         self.run_label.setObjectName("faint")
         nav_box.addWidget(self.run_label)
-        self.glass_label = QLabel("初始化中…")
-        self.glass_label.setObjectName("faint")
-        nav_box.addWidget(self.glass_label)
-        hint = QLabel("纯 Python · PySide6")
-        hint.setObjectName("faint")
-        nav_box.addWidget(hint)
 
         self.stack = QStackedWidget()
-        self.chat = ChatView(self.cfg, self.proc, self.client, self.pal)
-        self.service = ServiceView(self.cfg, self.proc, self.pal)
+        self.chat = ChatView(self.cfg, self.proc_cli, self.client, self.pal)
+        self.service = ServiceView(self.cfg, self.proc_server, self.proc_cli, self.pal)
         self.models = ModelsView(self.cfg, self.pal)
         for view in (self.chat, self.service, self.models):
             self.stack.addWidget(view)
@@ -152,10 +160,15 @@ class MainWindow(FramelessWindow):
         if path:
             self.models.select(str(path))
 
+    def _on_llama_dir_changed(self) -> None:
+        """llama.cpp 目录变化后，模型页与标题栏下拉框一并刷新。"""
+        self.models.sync_dir()
+        self._refresh_model_combo()
+
     def _on_model_changed(self, path: str) -> None:
         self._refresh_model_combo()
         self.chat.on_model_changed()
-        if not self.proc.is_running():
+        if not self.any_running():
             self.models.tip.setVisible(False)
 
     # ---------------- 状态联动 ----------------
@@ -164,25 +177,34 @@ class MainWindow(FramelessWindow):
 
     def _sync_mode(self) -> None:
         program_type = str(self.cfg.get("program_type"))
-        running = self.proc.is_running()
+        # 状态只取当前模式的进程，避免 CLI 运行时把 server 误显示成运行中
+        running = self.manager_for(program_type).is_running()
         ready = self.service.ready and program_type == "llama-server"
         self.chat.set_mode(program_type, running, ready)
-        self.run_label.setText("● 运行中" if running else "● 未启动")
+
+        any_running = self.any_running()
+        self.run_label.setText("● 运行中" if any_running else "● 未启动")
         self.run_label.setStyleSheet(
-            f"color: {self.pal.success if running else self.pal.faint};"
+            f"color: {self.pal.success if any_running else self.pal.faint};"
         )
-        self.models.set_running(running)
+        self.run_label.setToolTip(
+            "llama-server：" + ("运行中" if self.proc_server.is_running() else "未启动")
+            + "\nllama-cli：" + ("运行中" if self.proc_cli.is_running() else "未启动")
+        )
+        self.models.set_running(any_running)
 
     def _on_health(self, ok: bool) -> None:
-        if str(self.cfg.get("program_type")) != "llama-server":
-            return
-        if not self.proc.is_running():
+        # 就绪状态只由 server 自己的进程决定，与界面当前选中哪个模式无关
+        if not self.proc_server.is_running():
             ok = False
         self.service.set_ready(ok)
 
     def _start_from_chat(self) -> None:
-        self._navigate(1)
-        QTimer.singleShot(60, self.service.start_process)
+        """CLI 终端页的按钮：只启停 llama-cli，不跳转页面、不触碰 server。"""
+        if self.proc_cli.is_running():
+            self.service.stop_process("llama-cli")
+        else:
+            self.service.start_process("llama-cli")
 
     # ---------------- 主题与毛玻璃 ----------------
     def _on_theme_toggle(self) -> None:
@@ -212,5 +234,6 @@ class MainWindow(FramelessWindow):
         except Exception:
             pass
         self.client.cancel()
-        self.proc.shutdown()
+        self.proc_server.shutdown()
+        self.proc_cli.shutdown()
         super().closeEvent(event)

@@ -228,7 +228,14 @@ class ModelsView(QWidget):
         self.model_changed.emit(path)
         if notify and old != path:
             name = path.replace("\\", "/").split("/")[-1]
-            self.tip.show_message(f"已切换为 {name}，需要重启服务后才会生效。")
+            self.tip.show_message(f"已切换为 {name}，需重启运行中的程序后才会生效。")
+
+    def sync_dir(self) -> None:
+        """服务页重新指定 llama.cpp 目录后，同步扫描目录与模型列表。"""
+        self.scan_row.blockSignals(True)
+        self.scan_row.set_text(str(self.cfg.get("scan_dir", "") or ""))
+        self.scan_row.blockSignals(False)
+        self.scan()
 
     def refresh_from_config(self) -> None:
         self._refresh_current()

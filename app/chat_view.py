@@ -6,10 +6,10 @@ import html
 import re
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
-    QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QStackedWidget, QTextBrowser, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .chat_client import StreamClient
@@ -49,10 +49,10 @@ def render_markdown(text: str, pal: Palette) -> str:
     for idx, (lang, code) in enumerate(blocks):
         head = f'<div style="color:{pal.muted};font-size:11px;">{lang or "code"}</div>' if lang else ""
         block = (
-            f'<table width="100%" cellpadding="9" style="background-color:{pal.code_bg};'
-            f'border-radius:8px;"><tr><td>{head}'
+            f'<div style="background-color:{pal.code_bg};border-radius:8px;'
+            f'padding:9px;margin:4px 0;word-wrap:break-word;">{head}'
             f'<pre style="color:{pal.code_text};font-family:Consolas,monospace;'
-            f'white-space:pre-wrap;margin:0;">{code}</pre></td></tr></table>'
+            f'white-space:pre-wrap;word-wrap:break-word;margin:0;">{code}</pre></div>'
         )
         text = text.replace(f"\x00CODE{idx}\x00", block)
     return text
@@ -78,6 +78,12 @@ class MessageBubble(QFrame):
         self.body.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.body.setFrameShape(QFrame.Shape.NoFrame)
+        # 强制按气泡宽度换行：长单词、URL、代码块都不得撑出横向滚动条
+        self.body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.body.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        option = self.body.document().defaultTextOption()
+        option.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.body.document().setDefaultTextOption(option)
         self.body.document().setDocumentMargin(0)
         box.addWidget(self.body)
 
@@ -97,14 +103,18 @@ class MessageBubble(QFrame):
             self.setStyleSheet(f"background: {pal.user_bubble}; border: none; border-radius: 14px;")
 
     def set_text(self, text: str) -> None:
-        self.body.setHtml(f'<div style="color:{self.pal.text};">{text}</div>')
+        self.body.setHtml(
+            f'<div style="color:{self.pal.text};word-wrap:break-word;'
+            f'overflow-wrap:break-word;">{text}</div>'
+        )
         self.fit_height()
 
     def fit_height(self) -> None:
         doc = self.body.document()
-        width = max(140, self.body.viewport().width())
+        width = max(120, self.body.viewport().width())
         doc.blockSignals(True)
         try:
+            # 显式锁定文档宽度，任何富文本块（代码块、长 URL）都只能在此宽度内折行
             doc.setTextWidth(width)
             # QTextBrowser 的富文本块自带行距与块边距，留出余量避免末行被裁切
             height = int(doc.size().height()) + 18
@@ -124,6 +134,7 @@ class ChatView(QWidget):
     def __init__(self, cfg: Config, proc: ProcManager, client: StreamClient, pal: Palette, parent=None):
         super().__init__(parent)
         self.cfg = cfg
+        # 这里只绑定 llama-cli 的进程管理器：终端输出、stdin 写入与速率解析都属 CLI 模式
         self.proc = proc
         self.client = client
         self.pal = pal
@@ -275,7 +286,11 @@ class ChatView(QWidget):
         self.terminal = QPlainTextEdit()
         self.terminal.setObjectName("terminal")
         self.terminal.setReadOnly(True)
-        self.terminal.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        # 终端输出按窗口宽度自动折行，不再出现需要左右拖动才能看全的长行
+        self.terminal.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.terminal.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        self.terminal.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.terminal.setMaximumBlockCount(1200)
         box.addWidget(self.terminal, 1)
 
         bar = QHBoxLayout()
@@ -487,6 +502,8 @@ class ChatView(QWidget):
         self.terminal.moveCursor(QTextCursor.MoveOperation.End)
         self.terminal.insertPlainText(strip_ansi(text))
         self.terminal.moveCursor(QTextCursor.MoveOperation.End)
+        # 隐藏的水平滚动条仍可能被内部布局设置 range，归零可杜绝任何横向偏移
+        self.terminal.horizontalScrollBar().setValue(0)
 
     def _on_proc_output(self, text: str) -> None:
         if self.mode == "llama-cli":
@@ -509,7 +526,7 @@ class ChatView(QWidget):
             self.mode_badge.setObjectName("badgeTeal")
             self.mode_badge.setText("本地终端 · llama-cli")
             self.state_label.setText("运行中" if running else "未启动")
-            self.cli_start_btn.setText("重启 CLI" if running else "启动 CLI")
+            self.cli_start_btn.setText("停止 CLI" if running else "启动 CLI")
         else:
             self.mode_badge.setObjectName("badge")
             self.mode_badge.setText("HTTP 对话 · llama-server")
